@@ -1,0 +1,19 @@
+# Tirakot Central Configuration
+
+# LLM Engine Configuration
+llm_model: "qwen2.5:1.5b"
+llm_api_base: "http://localhost:11434"
+
+# Speech-To-Text Configuration
+stt_model: "tiny.en"
+stt_device: "cuda"  # fallback to 'cpu' if no CUDA device
+
+# Text-To-Speech Configuration
+tts_voice: "en-US-AnaNeural"
+
+# Hotkey Trigger Configuration
+hotkey_trigger: "ctrl+shift+space"
+
+# Hardware / VRAM Settings
+vram_ceiling_gb: 4.0
+enable_cuda: true

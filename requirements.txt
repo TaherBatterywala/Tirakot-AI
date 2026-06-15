@@ -1,0 +1,11 @@
+ollama
+faster-whisper
+edge-tts
+sounddevice
+customtkinter
+pywin32
+pynput
+pystray
+lancedb
+sentence-transformers
+pyyaml
