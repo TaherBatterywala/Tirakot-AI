@@ -5,11 +5,14 @@ llm_model: "qwen2.5:1.5b"
 llm_api_base: "http://localhost:11434"
 
 # Speech-To-Text Configuration
-stt_model: "tiny.en"
-stt_device: "cuda"  # fallback to 'cpu' if no CUDA device
+stt_model: "base.en"          # Default upgraded from tiny.en for higher accuracy. Options: tiny.en, base.en, small.en
+stt_device: "cuda"            # Options: "cuda", "cpu"
+stt_compute_type: "float16"   # Options: "float16", "int8_float16", "int8"
 
 # Text-To-Speech Configuration
 tts_voice: "en-US-AnaNeural"
+tts_volume: "+50%"            # Increase volume by 50% for Edge TTS (e.g., "+30%", "+50%", or "-10%")
+tts_fallback: true            # Fall back to pyttsx3 offline if internet/edge-tts fails
 
 # Hotkey Trigger Configuration
 hotkey_trigger: "ctrl+shift+space"
