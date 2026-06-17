@@ -1,7 +1,7 @@
 # Tirakot Central Configuration
 
 # LLM Engine Configuration
-llm_model: "qwen2.5:1.5b"
+llm_model: "qwen2.5:3b"        # Upgraded to 3B for significantly higher accuracy and lower hallucinations.
 llm_api_base: "http://localhost:11434"
 
 # Speech-To-Text Configuration

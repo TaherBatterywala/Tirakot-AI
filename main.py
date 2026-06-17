@@ -4,7 +4,6 @@ os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 
 import asyncio
 import sys
-import torch
 import re
 from core.llm_engine import LLMEngine
 from core.prompt_manager import PromptManager
@@ -16,7 +15,8 @@ async def main():
     print("TIRAKOT: Local Task-Integrated OS Assistant (Phase 1)")
     print("=" * 60)
     
-    # Environment Diagnostics
+    # Environment Diagnostics (Lazy import torch to prevent 2.5s startup delay)
+    import torch
     print(f"CUDA Available: {torch.cuda.is_available()}")
     if torch.cuda.is_available():
         print(f"CUDA Device: {torch.cuda.get_device_name(0)}")
@@ -28,8 +28,8 @@ async def main():
     llm_engine = LLMEngine()
     
     stt_pipeline = STTPipeline()
-    # Pre-load STT model in background
-    await asyncio.to_thread(stt_pipeline.load_model)
+    # Pre-load STT model in background concurrently (does not block startup!)
+    stt_load_task = asyncio.create_task(asyncio.to_thread(stt_pipeline.load_model))
     
     tts_pipeline = TTSPipeline()
     
@@ -57,6 +57,11 @@ async def main():
                 
             prompt = ""
             if user_choice.strip() == "":
+                # Check if the Whisper model is still loading in the background
+                if not stt_pipeline.is_loaded:
+                    print("[System]: Whisper model is still loading in the background. Please wait a few seconds and try again.")
+                    continue
+                
                 # User started recording - stop any current speech playback
                 tts_pipeline.stop()
                 

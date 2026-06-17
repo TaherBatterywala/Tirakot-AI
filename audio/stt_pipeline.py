@@ -6,7 +6,6 @@ import numpy as np
 import sounddevice as sd
 import scipy.io.wavfile as wavfile
 import yaml
-from faster_whisper import WhisperModel
 
 class STTPipeline:
     def __init__(self, config_path: str = "config.yaml"):
@@ -30,16 +29,20 @@ class STTPipeline:
         self.model = None
         self.audio_queue = queue.Queue()
         self.sample_rate = 16000
+        self.is_loaded = False
 
     def load_model(self):
         """Loads the Whisper model. Can be run in a thread to prevent blocking."""
         if self.model is None:
             print(f"Loading STT Model: {self.model_name} on {self.device} ({self.compute_type})...")
+            # Lazy import faster_whisper to avoid startup delay
+            from faster_whisper import WhisperModel
             self.model = WhisperModel(
                 self.model_name,
                 device=self.device,
                 compute_type=self.compute_type
             )
+            self.is_loaded = True
             print("STT Model loaded successfully.")
 
     def _audio_callback(self, indata, frames, time, status):
