@@ -34,14 +34,16 @@ Managed by `os_integration/system_tools.py`. It bridges natural language command
 
 #### 2. Adaptive Acoustic Wake Word Detector
 Implemented inside `audio/stt_pipeline.py`. It enables hands-free operation:
-- **Exponential Moving Average (EMA)**: Calibrates background noise levels to prevent Whisper transcription hallucinations during quiet room periods:
-  $$\text{background\_rms} = 0.98 \times \text{background\_rms} + 0.02 \times \text{rms}$$
+- **Exponential Moving Average (EMA)**: Calibrates background noise levels to prevent Whisper transcription hallucinations during quiet room periods. Formula used:
+  `background_rms = 0.98 * background_rms + 0.02 * rms`
 - **VAD Gating**: Gathers consecutive speech frames to ignore short noise spikes (like mouse clicks).
 - **Stream Suspension**: Suspends background mic streams when recording active queries to prevent Windows PortAudio hardware access conflicts.
 
 #### 3. Transparent Floating Overlay UI
 Designed inside `ui/floating_overlay.py` to display state-dependent wave animations:
-- **Visual Waveform Canvas**: Draws four overlapping sine-wave layers pulsing dynamically to indicate system states (Listening, Thinking, Speaking, Idle).
+- **Visual Waveform Canvas**: Draws four overlapping sine-wave layers pulsing dynamically to indicate system states. Each wave point is calculated using standard trigonometric wave offsets:
+  `y = cy + amp * taper * (sin(x/w * freq * 2pi + phase) + 0.3 * sin(x/w * freq * 4pi + 1.5 * phase))`
+  where taper constraints wave edges: `taper = max(0, 1.0 - (|x - cx| / (w/2))^1.8)`
 - **Draggable Context Card**: Displays real-time transcriptions and streaming AI responses, with coordinate tracking for custom positioning.
 
 #### 4. Stream Interception & Web RAG Loop
@@ -75,9 +77,9 @@ graph TD
     TM --> TTS[audio/tts_pipeline.py<br>Double-Buffered TTS Player]
     TM --> TOOLS[os_integration/system_tools.py<br>Shell / calc / browser / vscode]
     
-    subgraph Memory Storage
-        TM --> MEM[memory/sqlite_logger.py<br>Conversation Log Database]
-        TM --> DB[memory/vector_store.py<br>LanceDB Context Embeddings]
+    subgraph Memory Storage (Planned Scaffolding)
+        TM --> MEM[memory/sqlite_logger.py<br>Scaffolding]
+        TM --> DB[memory/vector_store.py<br>Scaffolding]
     end
 ```
 
@@ -88,6 +90,7 @@ graph TD
 4. **`audio/tts_pipeline.py`**: Cleans text, downloads neural voice MP3 files, and plays them via the Windows Multimedia Control Interface (`winmm.dll`).
 5. **`ui/floating_overlay.py`**: Renders the borderless, transparent Tkinter canvas window and animated wave visuals.
 6. **`os_integration/system_tools.py`**: Contains OS-level automation utilities (launching browsers, running shell commands, creating local workspace files).
+7. **`memory/` (Planned Scaffolding)**: Contains placeholder file scaffolds ([sqlite_logger.py](memory/sqlite_logger.py) and [vector_store.py](memory/vector_store.py)) representing planned features for persistent SQLite database logging and LanceDB vector-embeddings RAG retrieval. The current session history is managed entirely in-memory for zero disk-overhead.
 
 ---
 
@@ -206,6 +209,19 @@ sequenceDiagram
     Worker->>Overlay: Set State: "idle" (Hide Overlay)
     deactivate Worker
 ```
+
+---
+
+## 🧠 Local LLM Selection: Why Ollama & Qwen 2.5?
+
+Tirakot utilizes **Ollama** running **Qwen 2.5** (specifically the `3B` instruct model, with a fallback to `1.5B` for lower-end configurations):
+* **Ollama Runtime Optimization**: Ollama packages local llama.cpp backends into a simple Windows service with automatic GPU detection. It handles quantized GGUF models efficiently, supports asynchronous token streaming, and releases VRAM dynamically when idle.
+* **Qwen 2.5 Model Capabilities**: Qwen 2.5 models show exceptional capabilities in tool-calling precision (generating JSON actions without syntax errors), multi-turn reasoning, and natural chat behavior.
+* **Strict Resource Budgeting**:
+  - **Ollama (Qwen 2.5 3B Q4_K_M)**: ~2.2GB VRAM.
+  - **faster-whisper (base.en)**: ~140MB VRAM.
+  - **Overhead**: ~2.34GB VRAM total.
+  This allows the assistant to run smoothly on lower-end hardware (such as RTX 3050 laptops with a 4GB VRAM ceiling) while keeping system response latency extremely low.
 
 ---
 
