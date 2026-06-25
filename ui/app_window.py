@@ -5,6 +5,11 @@ import math
 import queue
 import tkinter as tk
 import customtkinter as ctk
+import threading
+from PIL import Image, ImageDraw
+import pystray
+from pynput import keyboard
+from ui.floating_overlay import TirakotFloatingOverlay
 
 from ui.themes import THEMES
 from ui.components import ChatBubble, AvatarWidget
@@ -32,6 +37,8 @@ class TirakotApp(ctk.CTk):
         self._chat_sessions = {}
         self._session_buttons = {}
         self._active_session_id = None
+        self.overlay = None
+        self._last_user_speech = ""
 
         # ── Window Chrome ──
         self.title("Tirakot AI")
@@ -54,6 +61,9 @@ class TirakotApp(ctk.CTk):
 
         # Update initial voice state
         self._apply_voice_state()
+
+        self._setup_tray()
+        self._setup_hotkey()
 
         self.after(50, self._poll)
         self.after(40, self._animate_effects)
@@ -499,6 +509,22 @@ class TirakotApp(ctk.CTk):
         self._input_hist.append(text)
         self._hist_idx = len(self._input_hist)
         self.add_message(text, is_user=True)
+        self._last_user_speech = text
+        if self.overlay and self.overlay.winfo_exists() and self.overlay.winfo_viewable():
+            self.overlay.set_transcript(text)
+            self.overlay.set_response("")
+        self.cmd_queue.put(("send_text", text))
+
+    def _send_text_action(self, text):
+        if not text:
+            return
+        self._input_hist.append(text)
+        self._hist_idx = len(self._input_hist)
+        self.add_message(text, is_user=True)
+        self._last_user_speech = text
+        if self.overlay and self.overlay.winfo_exists() and self.overlay.winfo_viewable():
+            self.overlay.set_transcript(text)
+            self.overlay.set_response("")
         self.cmd_queue.put(("send_text", text))
 
     def _toggle_mic(self):
@@ -668,18 +694,45 @@ class TirakotApp(ctk.CTk):
 
                 if kind == "status":
                     self.set_status(data)
+                    if self.overlay and self.overlay.winfo_exists():
+                        self.overlay.set_status(data)
+
+                elif kind == "tool_status":
+                    if self.overlay and self.overlay.winfo_exists() and self.overlay.winfo_viewable():
+                        self.overlay.set_response(data)
+
+                elif kind == "wake_overlay":
+                    self._on_wake_overlay()
+
+                elif kind == "overlay_followup":
+                    # Continuous conversation: overlay stays visible for follow-up
+                    if self.overlay and self.overlay.winfo_exists() and self.overlay.winfo_viewable():
+                        self.overlay.show_followup()
+
+                elif kind == "overlay_dismiss":
+                    # Dismiss overlay (timeout or no speech)
+                    if self.overlay and self.overlay.winfo_exists():
+                        self.overlay.withdraw()
 
                 elif kind == "user_voice_transcribed":
-                    if self._current_page == "Home" and hasattr(self, "search_entry") and self.search_entry and self.search_entry.winfo_exists():
-                        self.search_entry.delete(0, tk.END)
-                        self.search_entry.insert(0, data)
-                        self.search_entry.focus()
+                    self._last_user_speech = data
+                    if self.overlay and self.overlay.winfo_exists() and self.overlay.winfo_viewable():
+                        self.overlay.set_transcript(data)
+                        self.overlay.set_response("")
                     else:
-                        self._entry.delete(0, tk.END)
-                        self._entry.insert(0, data)
-                        self._entry.focus()
+                        if self._current_page == "Home" and hasattr(self, "search_entry") and self.search_entry and self.search_entry.winfo_exists():
+                            self.search_entry.delete(0, tk.END)
+                            self.search_entry.insert(0, data)
+                            self.search_entry.focus()
+                            self._send_search()
+                        else:
+                            self._entry.delete(0, tk.END)
+                            self._entry.insert(0, data)
+                            self._entry.focus()
+                            self._send()
 
                 elif kind == "stream_start":
+                    self._current_stream_text = ""
                     self.active_bubble = self.add_message("", is_user=False, streaming=True)
                     if self.active_bubble:
                         self.active_bubble.session_id = self._active_session_id
@@ -688,6 +741,9 @@ class TirakotApp(ctk.CTk):
                     if self.active_bubble:
                         self.active_bubble.append_text(data)
                         self._chat._parent_canvas.yview_moveto(1.0)
+                    self._current_stream_text += data
+                    if self.overlay and self.overlay.winfo_exists() and self.overlay.winfo_viewable():
+                        self.overlay.set_response(self._current_stream_text)
 
                 elif kind == "stream_end":
                     if self.active_bubble:
@@ -716,6 +772,8 @@ class TirakotApp(ctk.CTk):
                         self.welcome_mic_lbl.configure(text_color=t["border_glow"])
                     if hasattr(self, "search_frame") and self.search_frame and self.search_frame.winfo_exists():
                         self.search_frame.configure(border_color=t["border_glow"], border_width=2)
+                    if self.overlay and self.overlay.winfo_exists():
+                        self.overlay.set_status("listening")
 
                 elif kind == "mic_inactive":
                     self._mic_on = False
@@ -736,6 +794,82 @@ class TirakotApp(ctk.CTk):
 
         self.after(50, self._poll)
 
-    def _on_close(self):
+    def _setup_tray(self):
+        image = Image.new('RGB', (64, 64), color=(24, 24, 27))
+        draw = ImageDraw.Draw(image)
+        draw.ellipse((8, 8, 56, 56), fill=(79, 172, 254))
+        
+        menu = pystray.Menu(
+            pystray.MenuItem("Show Panel", self._show_main_panel),
+            pystray.MenuItem("Show Overlay", self._show_overlay_mode),
+            pystray.MenuItem("Quit", self._quit_app)
+        )
+        self.tray_icon = pystray.Icon("Tirakot", image, "Tirakot AI", menu)
+        threading.Thread(target=self.tray_icon.run, daemon=True).start()
+
+    def _show_main_panel(self):
+        self.after(0, self._on_show_main_panel)
+
+    def _on_show_main_panel(self):
+        self.deiconify()
+        self.lift()
+        self.focus_force()
+        if self.overlay and self.overlay.winfo_exists():
+            self.overlay.withdraw()
+
+    def _show_overlay_mode(self):
+        self.after(0, self._on_show_overlay)
+
+    def _on_show_overlay(self):
+        self.withdraw()
+        if not self.overlay or not self.overlay.winfo_exists():
+            self.overlay = TirakotFloatingOverlay(self, self.cmd_queue, self.gui_queue, self._toggle_mic)
+        self.overlay.clear_text()
+        self.overlay.deiconify()
+        self.overlay.lift()
+        self._toggle_mic()
+
+    def _quit_app(self):
+        self.after(0, self._on_quit_app)
+
+    def _on_quit_app(self):
+        if self.overlay and self.overlay.winfo_exists():
+            self.overlay.destroy()
+        if hasattr(self, "tray_icon") and self.tray_icon:
+            self.tray_icon.stop()
         self.cmd_queue.put(("exit", None))
         self.destroy()
+
+    def _setup_hotkey(self):
+        def toggle_call():
+            self.after(0, self._on_hotkey_triggered)
+        
+        self.hotkey_listener = keyboard.GlobalHotKeys({
+            '<ctrl>+<shift>+<space>': toggle_call
+        })
+        self.hotkey_listener.start()
+
+    def _on_hotkey_triggered(self):
+        if not self.overlay or not self.overlay.winfo_exists():
+            self.overlay = TirakotFloatingOverlay(self, self.cmd_queue, self.gui_queue, self._toggle_mic)
+        
+        if self.overlay.winfo_viewable():
+            self.overlay.withdraw()
+            self.cmd_queue.put(("stop_speech", None))
+        else:
+            self.withdraw()
+            self.overlay.clear_text()
+            self.overlay.deiconify()
+            self.overlay.lift()
+            self._toggle_mic()
+
+    def _on_wake_overlay(self):
+        if not self.overlay or not self.overlay.winfo_exists():
+            self.overlay = TirakotFloatingOverlay(self, self.cmd_queue, self.gui_queue, self._toggle_mic)
+        self.withdraw()
+        self.overlay.clear_text()
+        self.overlay.deiconify()
+        self.overlay.lift()
+
+    def _on_close(self):
+        self.withdraw()

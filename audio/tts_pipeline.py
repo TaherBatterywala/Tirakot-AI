@@ -82,6 +82,7 @@ class TTSPipeline:
         self._playback_blocked = False  # Set to True when stopped/muted during a turn
         self._muted = False             # When True, TTS never speaks (voice toggle)
         self.gui_queue = gui_queue
+        self.active_count = 0
         
         # Audio playback queue and background processor
         self.queue = asyncio.Queue()
@@ -99,6 +100,11 @@ class TTSPipeline:
             except Exception:
                 pass
         return False
+
+    @property
+    def is_busy(self) -> bool:
+        """Checks if there is active playback or pending speak tasks in pre-generation/queue."""
+        return self.active_count > 0 or self.is_speaking
 
     async def _process_queue(self):
         """Monitors the queue and plays pre-generated audio files sequentially."""
@@ -133,6 +139,7 @@ class TTSPipeline:
             except Exception as e:
                 print(f"[TTS Worker Error]: {e}")
             finally:
+                self.active_count = max(0, self.active_count - 1)
                 self.queue.task_done()
 
     def reset(self):
@@ -142,6 +149,7 @@ class TTSPipeline:
     def stop(self):
         """Interrupts and stops any ongoing speech playback immediately, clearing the queue and blocking future speech for this turn."""
         self._playback_blocked = True
+        self.active_count = 0
         
         # Clear the queue of tasks, cancelling any that are currently pre-generating
         while not self.queue.empty():
@@ -199,6 +207,8 @@ class TTSPipeline:
         # Skip if cleaned text is empty or just whitespace
         if not cleaned_text.strip():
             return
+
+        self.active_count += 1
 
         # Define the pre-generation coroutine
         async def pre_generate():
