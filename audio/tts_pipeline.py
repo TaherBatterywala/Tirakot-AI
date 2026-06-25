@@ -15,23 +15,58 @@ except Exception:
 
 def clean_text_for_speech(text: str) -> str:
     """Removes code blocks, headers, list numbers, and formatting markup not suitable for speech."""
-    # 1. Remove multi-line code blocks
-    cleaned = re.sub(r'```.*?```', ' [Code block omitted] ', text, flags=re.DOTALL)
+    # 1. Remove multi-line code blocks entirely
+    cleaned = re.sub(r'```.*?```', '', text, flags=re.DOTALL)
     # 2. Remove inline code backticks
     cleaned = re.sub(r'`[^`]+`', '', cleaned)
-    # 3. Remove markdown headers (e.g., ### Step 1 -> Step 1)
+    # 3. Remove stray backtick sequences
+    cleaned = re.sub(r'`+', '', cleaned)
+    # 4. Remove markdown headers (e.g., ### Step 1 -> Step 1)
     cleaned = re.sub(r'#+\s*', ' ', cleaned)
-    # 4. Remove list markers (e.g., "1. ", "- ") using non-capturing groups to avoid look-behinds
+    # 5. Remove list markers (e.g., "1. ", "- ") using non-capturing groups to avoid look-behinds
     cleaned = re.sub(r'(?:^|\s)(?:\d+\.|\-|\*)\s+', ' ', cleaned)
-    # 5. Remove markdown bold/italic asterisks or underscores
+    # 6. Remove markdown bold/italic asterisks or underscores
     cleaned = re.sub(r'\*+', '', cleaned)
     cleaned = re.sub(r'_+', '', cleaned)
-    # 6. Replace multiple spaces/newlines with a single space
+    
+    # Split into sentences
+    sentences = re.split(r'(?<=[.!?])\s+|\n+', cleaned)
+    cleaned_sentences = []
+
+    # Aggressive patterns for programming code in ANY language (HTML, Java, SQL, C++, JS, Python)
+    code_indicators = [
+        r'\bimport\b', r'\bdef\b', r'\bclass\b', r'\bprint\b', r'\breturn\b', 
+        r'\bconst\b', r'\blet\b', r'\bfunction\b', r'\bvar\b',
+        r'#include', r'\busing\s+namespace\b', r'\bstd::\b', r'\bcout\b', r'\bcin\b',
+        r'\bpublic\s+class\b', r'\bpublic\s+static\b', r'\bvoid\b', r'System\.out',
+        r'<html>', r'<\/?[a-zA-Z0-9]+(?:\s+[^>]*)?>', # HTML tags
+        r'\bselect\b.*\bfrom\b', r'\binsert\b\s+\binto\b', r'\bcreate\b\s+\btable\b', # SQL
+        r'[{};()\[\]=+\-*/&|<>%]', # Syntax chars
+    ]
+
+    for sent in sentences:
+        sent_strip = sent.strip()
+        if not sent_strip:
+            continue
+        # Check if the sentence looks like code
+        is_code = False
+        for pat in code_indicators:
+            if re.search(pat, sent_strip, re.IGNORECASE):
+                is_code = True
+                break
+        if not is_code:
+            cleaned_sentences.append(sent_strip)
+        
+    cleaned = " ".join(cleaned_sentences)
+    
+    # Remove programming symbols that shouldn't be spoken
+    cleaned = re.sub(r'[{}\[\]()=;:<>/@#$%^&+\-*|]', ' ', cleaned)
+    # Replace multiple spaces/newlines with a single space
     cleaned = re.sub(r'\s+', ' ', cleaned)
     return cleaned.strip()
 
 class TTSPipeline:
-    def __init__(self, config_path: str = "config.yaml"):
+    def __init__(self, config_path: str = "config.yaml", gui_queue=None):
         try:
             with open(config_path, 'r') as f:
                 self.config = yaml.safe_load(f)
@@ -45,6 +80,8 @@ class TTSPipeline:
         self.sapi_speaker = None
         self._is_playing_mci = False
         self._playback_blocked = False  # Set to True when stopped/muted during a turn
+        self._muted = False             # When True, TTS never speaks (voice toggle)
+        self.gui_queue = gui_queue
         
         # Audio playback queue and background processor
         self.queue = asyncio.Queue()
@@ -73,6 +110,10 @@ class TTSPipeline:
                     # Await the pre-generation task to complete (resolves to path or text)
                     success, path_or_text = await task
                     if not self._playback_blocked:
+                        # Notify GUI that speaking started
+                        if self.gui_queue:
+                            self.gui_queue.put(("status", "speaking"))
+                            
                         if success:
                             # Play the downloaded MP3 file instantly
                             await self._play_mp3_mci(path_or_text)
@@ -83,6 +124,10 @@ class TTSPipeline:
                         elif self.fallback_enabled:
                             # Fallback to offline SAPI5 if online generation failed
                             await self._speak_sapi5(path_or_text)
+                            
+                        # Notify GUI that speaking finished (only if queue is empty)
+                        if self.gui_queue and self.queue.empty():
+                            self.gui_queue.put(("status", "idle"))
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -115,7 +160,12 @@ class TTSPipeline:
                 winmm.mciSendStringW('close tirakot_speak', None, 0, 0)
             except Exception:
                 pass
+        self._is_playing_mci = False
         
+        # Notify GUI to return to idle
+        if self.gui_queue:
+            self.gui_queue.put(("status", "idle"))
+
         # Wait for the background play thread to confirm it has stopped and exited
         # This prevents race conditions where the main thread calls reset() immediately
         for _ in range(50):
@@ -132,16 +182,22 @@ class TTSPipeline:
             except Exception:
                 pass
 
+    def set_muted(self, muted: bool):
+        """Enable or disable all TTS output (voice toggle)."""
+        self._muted = muted
+        if muted:
+            self.stop()
+
     async def speak(self, text: str):
         """
         Cleans and enqueues a background pre-generation task for speech.
         """
-        if self._playback_blocked:
+        if self._playback_blocked or self._muted:
             return
 
         cleaned_text = clean_text_for_speech(text)
-        # Skip if it is just empty or code block marker
-        if not cleaned_text.replace("[Code block omitted]", "").strip():
+        # Skip if cleaned text is empty or just whitespace
+        if not cleaned_text.strip():
             return
 
         # Define the pre-generation coroutine
