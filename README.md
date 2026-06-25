@@ -77,7 +77,7 @@ graph TD
     TM --> TTS[audio/tts_pipeline.py<br>Double-Buffered TTS Player]
     TM --> TOOLS[os_integration/system_tools.py<br>Shell / calc / browser / vscode]
     
-    subgraph Memory Storage (Planned Scaffolding)
+    subgraph MEM_STORE ["Memory Storage (Planned Scaffolding)"]
         TM --> MEM[memory/sqlite_logger.py<br>Scaffolding]
         TM --> DB[memory/vector_store.py<br>Scaffolding]
     end
